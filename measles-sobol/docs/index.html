@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Measles Sensitivity Explorer</title>
+<meta name="description" content="A toy measles transmission model with Sobol' variance-based sensitivity analysis. Run the model live and see which uncertain inputs drive outbreak risk.">
+<style>
+:root {
+  --bg: #f6f5f2;
+  --surface: #fcfcfb;
+  --surface-2: #f0efec;
+  --border: #e3e2de;
+  --grid: #e9e8e4;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-3: #7a7975;
+  --blue: #2a78d6;
+  --orange: #eb6834;
+  --accent: #2a78d6;
+  --warn-bg: #fdf3e1;
+  --warn-ink: #6b4a00;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111110;
+    --surface: #1a1a19;
+    --surface-2: #242422;
+    --border: #33332f;
+    --grid: #2c2c29;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --ink-3: #8f8e86;
+    --blue: #3987e5;
+    --orange: #d95926;
+    --accent: #3987e5;
+    --warn-bg: #2d2513;
+    --warn-ink: #f0d9a3;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111110; --surface: #1a1a19; --surface-2: #242422; --border: #33332f;
+  --grid: #2c2c29; --ink: #ffffff; --ink-2: #c3c2b7; --ink-3: #8f8e86;
+  --blue: #3987e5; --orange: #d95926; --accent: #3987e5;
+  --warn-bg: #2d2513; --warn-ink: #f0d9a3;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+header { padding: 48px 0 24px; }
+.eyebrow { font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 8px; }
+h1 { font-size: clamp(28px, 4.2vw, 42px); line-height: 1.15; margin: 0 0 14px; letter-spacing: -.01em; max-width: 22ch; }
+h2 { font-size: 24px; line-height: 1.25; margin: 0 0 6px; }
+h3 { font-size: 15px; margin: 0 0 10px; color: var(--ink-2); font-weight: 600; }
+p { margin: 0 0 12px; }
+.lede { font-size: 18px; color: var(--ink-2); max-width: 62ch; }
+a { color: var(--accent); }
+.links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.btn {
+  display: inline-block; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--ink); text-decoration: none; font-size: 14px; cursor: pointer;
+  font-family: inherit;
+}
+.btn:hover { border-color: var(--ink-3); }
+.btn[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.note {
+  background: var(--warn-bg); color: var(--warn-ink); border-radius: var(--radius);
+  padding: 12px 16px; font-size: 14px; margin: 8px 0 0;
+}
+section { padding: 36px 0 8px; }
+.section-sub { color: var(--ink-2); max-width: 68ch; margin-bottom: 20px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+
+/* Explorer */
+.explorer { display: grid; grid-template-columns: 320px 1fr; gap: 20px; align-items: start; }
+@media (max-width: 880px) { .explorer { grid-template-columns: 1fr; } }
+.group { margin-bottom: 18px; }
+.group:last-child { margin-bottom: 0; }
+.ctl { margin-bottom: 12px; }
+.ctl label { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; color: var(--ink-2); }
+.ctl output { color: var(--ink); font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+input[type=range] { width: 100%; accent-color: var(--accent); margin: 4px 0 0; }
+.presets { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+@media (max-width: 640px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
+.tile { background: var(--surface-2); border-radius: 8px; padding: 12px; }
+.tile .k { font-size: 12px; color: var(--ink-2); line-height: 1.3; }
+.tile .v { font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 4px; }
+.tile .s { font-size: 12px; color: var(--ink-3); }
+.chart { position: relative; margin-top: 8px; }
+.chart + .chart { margin-top: 18px; }
+.chart-title { font-size: 14px; font-weight: 600; margin: 0; }
+.chart-sub { font-size: 13px; color: var(--ink-3); margin: 0 0 4px; }
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+svg text { fill: var(--ink-3); font-size: 11px; font-family: inherit; }
+svg .axis-line { stroke: var(--border); }
+svg .gridline { stroke: var(--grid); stroke-width: 1; }
+svg .threshold { stroke: var(--ink-2); stroke-dasharray: 4 4; stroke-width: 1; }
+svg .threshold-label { fill: var(--ink-2); }
+svg .crosshair { stroke: var(--ink-3); stroke-width: 1; }
+.tooltip {
+  position: absolute; pointer-events: none; background: var(--ink); color: var(--surface);
+  font-size: 12px; line-height: 1.4; padding: 6px 9px; border-radius: 6px; white-space: nowrap;
+  transform: translate(-50%, -110%); opacity: 0; transition: opacity .08s;
+}
+.tooltip.show { opacity: 1; }
+
+/* Sobol */
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.seg { display: flex; flex-wrap: wrap; gap: 8px; }
+.legend { display: flex; gap: 16px; font-size: 13px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+details { margin-top: 14px; }
+summary { cursor: pointer; color: var(--ink-2); font-size: 14px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; margin-top: 10px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+th { color: var(--ink-2); font-weight: 600; }
+td.num, th.num { text-align: right; }
+.table-scroll { overflow-x: auto; }
+
+.findings { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+@media (max-width: 760px) { .findings { grid-template-columns: 1fr; } }
+.finding h3 { color: var(--ink); font-size: 16px; margin-bottom: 6px; }
+.finding p { color: var(--ink-2); font-size: 15px; margin: 0; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
+ul { padding-left: 20px; margin: 0; }
+li { margin-bottom: 6px; color: var(--ink-2); }
+code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 14px; }
+.refs li { font-size: 14px; }
+footer { padding: 36px 0 48px; color: var(--ink-3); font-size: 14px; }
+.topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
+.topbar .eyebrow { margin: 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="topbar">
+    <p class="eyebrow">Toy model · Sobol' sensitivity analysis · R + JavaScript</p>
+    <button class="btn" id="themeToggle" type="button" aria-label="Toggle dark mode">Theme</button>
+  </div>
+  <h1>Which uncertain inputs drive measles outbreak risk?</h1>
+  <p class="lede">A simple measles transmission model with births, two routine vaccine doses and periodic mass campaigns.
+    Move the sliders to run it live, then see which inputs matter most across 400,000 runs.</p>
+  <div class="links">
+    <a class="btn" href="https://github.com/Ahmadbey678/measles-sobol">Code on GitHub</a>
+    <a class="btn" href="https://github.com/Ahmadbey678/measles-sobol#readme">Full write-up</a>
+  </div>
+  <p class="note">This is a learning exercise. The model is not calibrated to any country and its results are not policy advice.
+    Its assumptions and limits are listed at the bottom of this page.</p>
+</header>
+
+<section id="explore">
+  <h2>Try the model</h2>
+  <p class="section-sub">Between campaigns, unvaccinated newborns pile up and the effective reproduction number climbs.
+    When it passes 1, an imported case can start a growing outbreak. Each campaign knocks it back down.</p>
+
+  <div class="explorer">
+    <div class="card" id="controls">
+      <h3>Scenarios</h3>
+      <div class="presets" role="group" aria-label="Preset scenarios">
+        <button class="btn" type="button" data-preset="low">Low coverage</button>
+        <button class="btn" type="button" data-preset="high">High coverage</button>
+        <button class="btn" type="button" data-preset="mid">Middle of every range</button>
+      </div>
+      <div id="sliders"></div>
+    </div>
+
+    <div class="card">
+      <div class="tiles" id="tiles"></div>
+      <div class="chart" id="reffChart">
+        <p class="chart-title">Effective reproduction number over 20 years</p>
+        <p class="chart-sub">R0 × share susceptible. Dashed line: outbreak threshold.</p>
+      </div>
+      <div class="chart" id="casesChart">
+        <p class="chart-title">New cases per 100,000 people, every two weeks</p>
+        <p class="chart-sub">Outbreaks show as spikes once the threshold is crossed.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="sobol">
+  <h2>Which inputs drive the results?</h2>
+  <p class="section-sub">Sobol' indices split the variation in an output into the share caused by each input.
+    <strong>First-order</strong> is an input's effect on its own. <strong>Total</strong> adds its effect through interactions with other inputs.
+    Computed in R from <span id="nRuns"></span> model runs, with 95% bootstrap intervals.</p>
+  <div class="card">
+    <div class="toolbar">
+      <div class="seg" role="group" aria-label="Choose output" id="outputToggle"></div>
+      <div class="legend">
+        <span><i class="dot" style="background:var(--blue)"></i>First-order</span>
+        <span><i class="dot" style="background:var(--orange)"></i>Total</span>
+      </div>
+    </div>
+    <div class="chart" id="sobolChart"></div>
+    <details>
+      <summary>Show as a table</summary>
+      <div class="table-scroll"><table id="sobolTable"></table></div>
+    </details>
+  </div>
+</section>
+
+<section id="findings">
+  <h2>What came out</h2>
+  <div class="findings" style="margin-top:16px">
+    <div class="card finding">
+      <h3>First-dose coverage and campaign reach dominate</h3>
+      <p>Together they account for roughly two-thirds of the variation in both average burden and peak outbreak risk.</p>
+    </div>
+    <div class="card finding">
+      <h3>Birth rate matters as much as campaign spacing</h3>
+      <p>High-birth-rate settings refill the pool of susceptible children faster, so the same campaign schedule protects them less.</p>
+    </div>
+    <div class="card finding">
+      <h3>Imports raise cases, not risk</h3>
+      <p>Imported infections matter for average burden but barely at all for peak Reff. They seed outbreaks without changing how many people are susceptible.</p>
+    </div>
+    <div class="card finding">
+      <h3>Dose timing barely registers here, and that is the model's limit</h3>
+      <p>With no age structure, vaccinating at 12 rather than 9 months has no cost, because infants are never exposed while they wait.
+        The second dose also only reaches children who got the first. A model with age structure could reach a different conclusion.</p>
+    </div>
+  </div>
+</section>
+
+<section id="method">
+  <div class="cols">
+    <div>
+      <h2>How the model works</h2>
+      <ul style="margin-top:12px">
+        <li>Two-week time steps, roughly one measles generation.</li>
+        <li>Each step, a susceptible person escapes infection with probability exp(−R0 × I / N). Imported infections are added to I.</li>
+        <li>Constant population with births equal to deaths.</li>
+        <li>A newborn is protected if dose 1 works, or if dose 1 failed and dose 2 works. Dose 1 effectiveness rises from 77% at 9 months to 92% at 12 months.</li>
+        <li>Every few years, a campaign vaccinates a share of the current susceptibles.</li>
+        <li>10-year burn-in, then 20 recorded years.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Limitations</h2>
+      <ul style="margin-top:12px">
+        <li>No age structure: no infant infections, no maternal immunity period, no age-targeted campaigns.</li>
+        <li>Deterministic, with no spatial variation. Real immunity gaps cluster by district and community.</li>
+        <li>Campaigns reach susceptibles independently of routine vaccination. In reality the same hard-to-reach children tend to be missed by both.</li>
+        <li>Input ranges are plausible but not fitted to data. Different ranges would give different indices.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="refs">
+  <h2>References</h2>
+  <ul class="refs" style="margin-top:12px">
+    <li>Guerra FM, et al. (2017). The basic reproduction number (R0) of measles: a systematic review. <em>Lancet Infectious Diseases</em> 17(12): e420–e428.</li>
+    <li>Uzicanin A, Zimmerman L. (2011). Field effectiveness of live attenuated measles-containing vaccines: a review of published literature. <em>Journal of Infectious Diseases</em> 204(Suppl 1): S133–S148.</li>
+    <li>Jansen MJW. (1999). Analysis of variance designs for model output. <em>Computer Physics Communications</em> 117: 35–43.</li>
+    <li>Saltelli A, et al. (2010). Variance based sensitivity analysis of model output. <em>Computer Physics Communications</em> 181: 259–270.</li>
+  </ul>
+</section>
+
+<footer>
+  Built by <a href="https://raja-ahmad-mahmood.vercel.app/">Raja Ahmad Mahmood</a>.
+  The model runs in your browser; the sensitivity analysis was computed in R (<code>sensitivity</code> package) and cross-checked in Python (SALib).
+</footer>
+
+</div>
+
+<script src="results.js"></script>
+<script src="model.js"></script>
+<script>
+(function () {
+  "use strict";
+  const PARAMS = window.PARAMS;
+  const SOBOL = window.SOBOL;
+  const simulate = window.MeaslesModel.simulate;
+
+  // ---------- theme toggle ----------
+  const rootEl = document.documentElement;
+  document.getElementById("themeToggle").addEventListener("click", () => {
+    const dark = rootEl.dataset.theme
+      ? rootEl.dataset.theme === "dark"
+      : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    rootEl.dataset.theme = dark ? "light" : "dark";
+    renderAll();
+  });
+  const cssVar = (n) => getComputedStyle(rootEl).getPropertyValue(n).trim();
+
+  // ---------- controls ----------
+  const GROUPS = [
+    ["Transmission and demography", ["R0", "birth_rate", "importation"]],
+    ["Routine vaccination", ["mcv1_cov", "mcv2_cov", "mcv1_age"]],
+    ["Mass campaigns", ["sia_interval", "sia_reach"]],
+  ];
+  const STEP = { R0: 0.1, birth_rate: 1, importation: 0.1, mcv1_cov: 0.01, mcv2_cov: 0.01,
+                 mcv1_age: 0.5, sia_interval: 0.5, sia_reach: 0.01 };
+  const FMT = {
+    R0: (v) => v.toFixed(1),
+    birth_rate: (v) => v.toFixed(0) + " per 1,000",
+    importation: (v) => v.toFixed(1) + " per million",
+    mcv1_cov: (v) => Math.round(v * 100) + "%",
+    mcv2_cov: (v) => Math.round(v * 100) + "%",
+    mcv1_age: (v) => v.toFixed(1).replace(".0", "") + " months",
+    sia_interval: (v) => v.toFixed(1).replace(".0", "") + " years",
+    sia_reach: (v) => Math.round(v * 100) + "%",
+  };
+  const LABEL = {
+    R0: "R0 (cases per case, no immunity)",
+    birth_rate: "Birth rate",
+    importation: "Imported infections, per 2 weeks",
+    mcv1_cov: "Dose 1 coverage",
+    mcv2_cov: "Dose 2 coverage (of dose 1 recipients)",
+    mcv1_age: "Age at dose 1",
+    sia_interval: "Years between campaigns",
+    sia_reach: "Campaign reach (of susceptibles)",
+  };
+  const PRESETS = {
+    low:  { R0: 15, birth_rate: 35, importation: 1, mcv1_cov: 0.65, mcv2_cov: 0.40, mcv1_age: 9, sia_interval: 4, sia_reach: 0.40 },
+    high: { R0: 15, birth_rate: 35, importation: 1, mcv1_cov: 0.92, mcv2_cov: 0.85, mcv1_age: 9, sia_interval: 3, sia_reach: 0.60 },
+    mid:  Object.fromEntries(PARAMS.map((p) => [p.name, (p.lower + p.upper) / 2])),
+  };
+  const byName = Object.fromEntries(PARAMS.map((p) => [p.name, p]));
+  const state = Object.assign({}, PRESETS.low);
+
+  const slidersEl = document.getElementById("sliders");
+  const inputs = {};
+  GROUPS.forEach(([title, names]) => {
+    const g = document.createElement("div");
+    g.className = "group";
+    g.innerHTML = `<h3>${title}</h3>`;
+    names.forEach((n) => {
+      const p = byName[n];
+      const id = "in_" + n;
+      const d = document.createElement("div");
+      d.className = "ctl";
+      d.innerHTML = `<label for="${id}"><span>${LABEL[n]}</span><output id="out_${n}"></output></label>
+        <input type="range" id="${id}" min="${p.lower}" max="${p.upper}" step="${STEP[n]}">`;
+      g.appendChild(d);
+      const inp = d.querySelector("input");
+      inp.value = state[n];
+      inp.addEventListener("input", () => { state[n] = parseFloat(inp.value); setPressed(null); update(); });
+      inputs[n] = inp;
+    });
+    slidersEl.appendChild(g);
+  });
+  const presetBtns = document.querySelectorAll("[data-preset]");
+  function setPressed(key) {
+    presetBtns.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.preset === key)));
+  }
+  presetBtns.forEach((b) => b.addEventListener("click", () => {
+    Object.assign(state, PRESETS[b.dataset.preset]);
+    for (const n in inputs) inputs[n].value = state[n];
+    setPressed(b.dataset.preset);
+    update();
+  }));
+  setPressed("low");
+
+  // ---------- formatting ----------
+  function fmtNum(v) {
+    if (v >= 1000) return Math.round(v).toLocaleString("en-US");
+    if (v >= 100) return v.toFixed(0);
+    if (v >= 10) return v.toFixed(1);
+    if (v >= 1) return v.toFixed(2);
+    return v.toPrecision(2);
+  }
+
+  // ---------- line chart ----------
+  const NS = "http://www.w3.org/2000/svg";
+  function el(tag, attrs, parent) {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  // Pick a round tick step (1, 2, 2.5 or 5 x 10^k) giving about 4 intervals.
+  function niceTicks(maxVal) {
+    const raw = Math.max(maxVal, 1e-9) / 4;
+    const p = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 2.5, 5, 10].map((k) => k * p).find((s) => s >= raw);
+    const n = Math.ceil(maxVal / step - 1e-9);
+    return { step, top: step * n, n };
+  }
+  function fmtTick(v, step) {
+    const dec = Math.max(0, -Math.floor(Math.log10(step) + 1e-9) + (step / Math.pow(10, Math.floor(Math.log10(step))) === 2.5 ? 1 : 0));
+    return Number(v.toFixed(dec)).toLocaleString("en-US", { maximumFractionDigits: dec });
+  }
+
+  function lineChart(container, xs, ys, opts) {
+    container.querySelectorAll("svg, .tooltip").forEach((n) => n.remove());
+    const W = Math.max(260, container.clientWidth), H = W < 480 ? 170 : 200;
+    const m = { l: 44, r: 12, t: 10, b: 26 };
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": opts.aria }, container);
+    const xMax = xs[xs.length - 1];
+    const tk = niceTicks(Math.max(opts.minYMax || 0, ...ys) * 1.03);
+    const yMax = tk.top;
+    const X = (x) => m.l + (x / xMax) * (W - m.l - m.r);
+    const Y = (y) => H - m.b - (y / yMax) * (H - m.t - m.b);
+
+    for (let i = 0; i <= tk.n; i++) {
+      const v = tk.step * i;
+      el("line", { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), class: "gridline" }, svg);
+      const t = el("text", { x: m.l - 6, y: Y(v) + 4, "text-anchor": "end" }, svg);
+      t.textContent = fmtTick(v, tk.step);
+    }
+    for (let yr = 0; yr <= xMax; yr += 5) {
+      const t = el("text", { x: X(yr), y: H - 8, "text-anchor": "middle" }, svg);
+      t.textContent = yr === 0 ? "0" : yr + " yr";
+    }
+    if (opts.threshold != null && opts.threshold <= yMax) {
+      el("line", { x1: m.l, x2: W - m.r, y1: Y(opts.threshold), y2: Y(opts.threshold), class: "threshold" }, svg);
+    }
+    let d = "";
+    xs.forEach((x, i) => { d += (i ? "L" : "M") + X(x).toFixed(1) + "," + Y(ys[i]).toFixed(1); });
+    el("path", { d, fill: "none", stroke: opts.color, "stroke-width": 2, "stroke-linejoin": "round" }, svg);
+
+    // hover layer
+    const cross = el("line", { y1: m.t, y2: H - m.b, class: "crosshair", visibility: "hidden" }, svg);
+    const dot = el("circle", { r: 4, fill: opts.color, stroke: cssVar("--surface"), "stroke-width": 2, visibility: "hidden" }, svg);
+    const tip = document.createElement("div");
+    tip.className = "tooltip";
+    container.appendChild(tip);
+    const hit = el("rect", { x: m.l, y: 0, width: W - m.l - m.r, height: H, fill: "transparent" }, svg);
+    function move(clientX) {
+      const r = svg.getBoundingClientRect();
+      const sx = ((clientX - r.left) / r.width) * W;
+      const xv = Math.max(0, Math.min(xMax, ((sx - m.l) / (W - m.l - m.r)) * xMax));
+      let i = Math.round((xv / xMax) * (xs.length - 1));
+      i = Math.max(0, Math.min(xs.length - 1, i));
+      const cx = X(xs[i]), cy = Y(ys[i]);
+      cross.setAttribute("x1", cx); cross.setAttribute("x2", cx);
+      dot.setAttribute("cx", cx); dot.setAttribute("cy", cy);
+      cross.setAttribute("visibility", "visible"); dot.setAttribute("visibility", "visible");
+      const cr = container.getBoundingClientRect();
+      tip.style.left = (r.left - cr.left + (cx / W) * r.width) + "px";
+      tip.style.top = (r.top - cr.top + (cy / H) * r.height - 6) + "px";
+      tip.innerHTML = `Year ${xs[i].toFixed(1)}<br><b>${opts.valueLabel}: ${opts.fmt(ys[i])}</b>`;
+      tip.classList.add("show");
+    }
+    function hide() {
+      cross.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden");
+      tip.classList.remove("show");
+    }
+    hit.addEventListener("mousemove", (e) => move(e.clientX));
+    hit.addEventListener("mouseleave", hide);
+    hit.addEventListener("touchmove", (e) => { move(e.touches[0].clientX); }, { passive: true });
+    hit.addEventListener("touchend", hide);
+  }
+
+  // ---------- explorer update ----------
+  const tilesEl = document.getElementById("tiles");
+  let last = null;
+  function update() {
+    for (const n in inputs) document.getElementById("out_" + n).textContent = FMT[n](state[n]);
+    last = simulate(state);
+    const r = last;
+    const above = r.peakReff > 1;
+    tilesEl.innerHTML = `
+      <div class="tile"><div class="k">Newborns protected by routine doses</div><div class="v">${Math.round(r.routineProtected * 100)}%</div></div>
+      <div class="tile"><div class="k">Average cases per 100,000 per year</div><div class="v">${fmtNum(r.incidence)}</div></div>
+      <div class="tile"><div class="k">Peak effective reproduction number</div><div class="v">${r.peakReff.toFixed(2)}</div><div class="s">${above ? "Crosses the outbreak threshold" : "Stays below the threshold"}</div></div>
+      <div class="tile"><div class="k">Share of time above the threshold</div><div class="v">${Math.round(r.fracAbove * 100)}%</div></div>`;
+    drawExplorerCharts();
+  }
+  function drawExplorerCharts() {
+    if (!last) return;
+    const t = last.traj;
+    lineChart(document.getElementById("reffChart"), t.year, t.reff, {
+      color: cssVar("--blue"), threshold: 1, minYMax: 1.2,
+      valueLabel: "Reff", fmt: (v) => v.toFixed(2),
+      aria: "Line chart of effective reproduction number over 20 years",
+    });
+    lineChart(document.getElementById("casesChart"), t.year, t.casesPer100k, {
+      color: cssVar("--orange"), minYMax: 0.1,
+      valueLabel: "Cases per 100k", fmt: fmtNum,
+      aria: "Line chart of new cases per 100,000 every two weeks",
+    });
+  }
+
+  // ---------- Sobol chart ----------
+  const OUTPUTS = [...new Set(SOBOL.map((d) => d.output))];
+  const OUT_LABEL = {
+    [OUTPUTS[0]]: "Average burden",
+    [OUTPUTS[1]]: "Peak outbreak risk",
+  };
+  let currentOut = OUTPUTS[1];
+  const toggleEl = document.getElementById("outputToggle");
+  OUTPUTS.forEach((o) => {
+    const b = document.createElement("button");
+    b.className = "btn"; b.type = "button"; b.textContent = OUT_LABEL[o]; b.title = o;
+    b.addEventListener("click", () => { currentOut = o; drawSobol(); });
+    toggleEl.appendChild(b);
+  });
+  document.getElementById("nRuns").textContent = window.SOBOL_N_RUNS.toLocaleString("en-US");
+
+  function drawSobol() {
+    toggleEl.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.title === currentOut)));
+    const box = document.getElementById("sobolChart");
+    box.querySelectorAll("svg, .tooltip").forEach((n) => n.remove());
+    const rows = SOBOL.filter((d) => d.output === currentOut);
+    const params = PARAMS.map((p) => p.name).sort((a, b) => {
+      const ta = rows.find((d) => d.param === a && d.index === "Total").value;
+      const tb = rows.find((d) => d.param === b && d.index === "Total").value;
+      return tb - ta;
+    });
+    const W = Math.max(280, box.clientWidth);
+    const narrow = W < 520;
+    const rowH = 34, m = { l: narrow ? 142 : 170, r: 14, t: 8, b: 34 };
+    const H = m.t + m.b + params.length * rowH;
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img",
+      "aria-label": "Sobol' first-order and total indices for " + currentOut }, box);
+    const xMax = Math.max(0.45, ...rows.map((d) => d.hi)) ;
+    const X = (v) => m.l + (Math.max(0, v) / xMax) * (W - m.l - m.r);
+    const xStep = narrow ? 0.2 : 0.1;
+    for (let v = 0; v <= xMax + 1e-9; v += xStep) {
+      el("line", { x1: X(v), x2: X(v), y1: m.t, y2: H - m.b, class: "gridline" }, svg);
+      const t = el("text", { x: X(v), y: H - m.b + 16, "text-anchor": "middle" }, svg);
+      t.textContent = v.toFixed(1);
+    }
+    const xt = el("text", { x: (m.l + W - m.r) / 2, y: H - 2, "text-anchor": "middle" }, svg);
+    xt.textContent = "Share of output variance";
+
+    const tip = document.createElement("div");
+    tip.className = "tooltip";
+    box.appendChild(tip);
+    const colors = { "First-order": cssVar("--blue"), "Total": cssVar("--orange") };
+
+    params.forEach((pn, i) => {
+      const cy = m.t + i * rowH + rowH / 2;
+      const lab = el("text", { x: m.l - 10, y: cy + 4, "text-anchor": "end",
+        style: "fill:var(--ink-2);font-size:" + (narrow ? 12 : 13) + "px" }, svg);
+      lab.textContent = byName[pn].short;
+      [["First-order", 5], ["Total", -5]].forEach(([idx, off]) => {
+        const d = rows.find((r) => r.param === pn && r.index === idx);
+        const y = cy + off;
+        el("line", { x1: X(d.lo), x2: X(d.hi), y1: y, y2: y, stroke: colors[idx], "stroke-width": 2, "stroke-linecap": "round" }, svg);
+        const c = el("circle", { cx: X(d.value), cy: y, r: 5, fill: colors[idx], stroke: cssVar("--surface"), "stroke-width": 2 }, svg);
+        const hitC = el("circle", { cx: X(d.value), cy: y, r: 12, fill: "transparent", style: "cursor:default" }, svg);
+        const show = () => {
+          const r = svg.getBoundingClientRect(), br = box.getBoundingClientRect();
+          tip.style.left = (r.left - br.left + (X(d.value) / W) * r.width) + "px";
+          tip.style.top = (r.top - br.top + (y / H) * r.height - 8) + "px";
+          tip.innerHTML = `${byName[pn].label}<br><b>${idx}: ${d.value.toFixed(3)}</b> (95% CI ${Math.max(0, d.lo).toFixed(3)}–${d.hi.toFixed(3)})`;
+          tip.classList.add("show");
+          c.setAttribute("r", 6.5);
+        };
+        const hide = () => { tip.classList.remove("show"); c.setAttribute("r", 5); };
+        hitC.addEventListener("mouseenter", show);
+        hitC.addEventListener("mouseleave", hide);
+        hitC.addEventListener("touchstart", show, { passive: true });
+      });
+    });
+
+    // table view
+    const tbl = document.getElementById("sobolTable");
+    let html = `<thead><tr><th>Input</th><th>Range</th><th class="num">First-order</th><th class="num">Total</th></tr></thead><tbody>`;
+    params.forEach((pn) => {
+      const p = byName[pn];
+      const f = rows.find((r) => r.param === pn && r.index === "First-order");
+      const t = rows.find((r) => r.param === pn && r.index === "Total");
+      html += `<tr><td>${p.label}</td><td>${p.lower} – ${p.upper}</td><td class="num">${f.value.toFixed(3)}</td><td class="num">${t.value.toFixed(3)}</td></tr>`;
+    });
+    tbl.innerHTML = html + "</tbody>";
+  }
+
+  function renderAll() { drawExplorerCharts(); drawSobol(); }
+  let rt;
+  window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(renderAll, 150); });
+  update();
+  drawSobol();
+})();
+</script>
+</body>
+</html>

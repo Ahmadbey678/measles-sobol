@@ -1,0 +1,153 @@
+# run_analysis.R
+# 1. Plots two example scenarios so the model's behaviour is visible.
+# 2. Runs a Sobol' variance-based sensitivity analysis (Jansen estimators)
+#    on two outputs and saves the indices and a figure.
+#
+# Run from the project root:   Rscript R/run_analysis.R
+
+suppressPackageStartupMessages({
+  library(sensitivity)
+  library(ggplot2)
+})
+source("R/model.R")
+dir.create("outputs", showWarnings = FALSE)
+set.seed(2027)
+
+BLUE   <- "#2a78d6"
+ORANGE <- "#eb6834"
+INK    <- "#52514e"
+theme_clean <- theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(colour = "#e6e5e1", linewidth = 0.3),
+        plot.background  = element_rect(fill = "#fcfcfb", colour = NA),
+        axis.text  = element_text(colour = INK),
+        axis.title = element_text(colour = INK),
+        plot.title.position = "plot")
+
+# ---- 1. Two example scenarios ---------------------------------------------
+scen <- data.frame(
+  R0 = 15, birth_rate = 35, importation = 1,
+  mcv1_cov     = c(0.65, 0.92),
+  mcv2_cov     = c(0.40, 0.85),
+  mcv1_age     = c(9, 9),
+  sia_interval = c(4, 3),
+  sia_reach    = c(0.40, 0.60)
+)
+sim <- simulate_measles(scen, keep_traj = TRUE)
+yrs <- seq_len(nrow(sim$traj_S)) / 26
+traj <- rbind(
+  data.frame(year = yrs, reff = scen$R0[1] * sim$traj_S[, 1], scenario = "Low coverage"),
+  data.frame(year = yrs, reff = scen$R0[2] * sim$traj_S[, 2], scenario = "High coverage")
+)
+traj <- traj[traj$year > 10, ]
+traj$year <- traj$year - 10
+labels_df <- data.frame(scenario = c("Low coverage", "High coverage"),
+                        year = c(2.6, 0.1), reff = c(0.47, 0.36))
+
+p1 <- ggplot(traj, aes(year, reff, colour = scenario)) +
+  geom_hline(yintercept = 1, linetype = "dashed", colour = INK, linewidth = 0.4) +
+  geom_line(linewidth = 0.7) +
+  geom_text(data = labels_df, aes(label = scenario), hjust = 0, vjust = 0,
+            size = 3.5, show.legend = FALSE) +
+  scale_colour_manual(values = c("Low coverage" = ORANGE, "High coverage" = BLUE)) +
+  scale_y_continuous(limits = c(0, NA)) +
+  labs(title = "Susceptibles build up between campaigns",
+       subtitle = "Effective reproduction number, R0 x share susceptible. Each drop is a mass campaign.",
+       x = "Years (after 10-year burn-in)", y = "Effective reproduction number",
+       caption = "Dashed line: outbreak threshold (Reff = 1). Above it, one imported case starts a growing outbreak.",
+       colour = NULL) +
+  theme_clean + theme(legend.position = "top", legend.justification = "left",
+                    plot.caption = element_text(colour = INK, hjust = 0))
+ggsave("outputs/scenarios.png", p1, width = 8, height = 4.5, dpi = 200)
+
+# ---- 2. Sobol' sensitivity analysis -----------------------------------------
+k      <- nrow(param_ranges)
+N_BASE <- 40000                     # total runs = N_BASE * (k + 2)
+NBOOT  <- 200                       # bootstrap replicates for 95% intervals
+
+X1 <- scale_params(matrix(runif(N_BASE * k), ncol = k))
+X2 <- scale_params(matrix(runif(N_BASE * k), ncol = k))
+design <- soboljansen(model = NULL, X1 = X1, X2 = X2, nboot = NBOOT)
+cat("Model runs:", nrow(design$X), "\n")
+
+t0  <- Sys.time()
+out <- simulate_measles(design$X)
+cat("Simulation time:", round(as.numeric(Sys.time() - t0, units = "secs"), 1), "s\n")
+
+outputs <- list(
+  log_incidence = list(y = log10(out$incidence),
+                       title = "Average burden (log10 cases/100k/yr)"),
+  peak_reff     = list(y = out$peak_reff,
+                       title = "Worst-case outbreak risk (peak Reff)")
+)
+
+tidy_indices <- function(x, output_name) {
+  S <- x$S; T <- x$T
+  rbind(
+    data.frame(output = output_name, param = rownames(S), index = "First-order",
+               value = S$original, lo = S$`min. c.i.`, hi = S$`max. c.i.`),
+    data.frame(output = output_name, param = rownames(T), index = "Total",
+               value = T$original, lo = T$`min. c.i.`, hi = T$`max. c.i.`)
+  )
+}
+
+res <- do.call(rbind, lapply(names(outputs), function(nm) {
+  d <- design
+  tell(d, outputs[[nm]]$y)
+  tidy_indices(d, outputs[[nm]]$title)
+}))
+res$label <- param_ranges$short[match(res$param, param_ranges$name)]
+rownames(res) <- NULL
+write.csv(res, "outputs/sobol_indices.csv", row.names = FALSE)
+
+# Export results and input ranges for the web page (docs/index.html), so the
+# page always shows exactly what this script computed.
+dir.create("docs", showWarnings = FALSE)
+json_str <- function(x) sprintf('"%s"', gsub('"', '\\\\"', x))
+param_js <- sprintf('  {"name":%s,"lower":%s,"upper":%s,"label":%s,"short":%s}',
+                    json_str(param_ranges$name), param_ranges$lower, param_ranges$upper,
+                    json_str(param_ranges$label), json_str(param_ranges$short))
+sobol_js <- sprintf('  {"output":%s,"param":%s,"index":%s,"value":%.4f,"lo":%.4f,"hi":%.4f}',
+                    json_str(as.character(res$output)), json_str(res$param),
+                    json_str(res$index), res$value, res$lo, res$hi)
+writeLines(c(
+  "// Generated by R/run_analysis.R. Do not edit by hand.",
+  sprintf("window.SOBOL_N_RUNS = %d;", nrow(design$X)),
+  sprintf("window.SOBOL_NBOOT = %d;", NBOOT),
+  "window.PARAMS = [", paste(param_js, collapse = ",\n"), "];",
+  "window.SOBOL = [",  paste(sobol_js, collapse = ",\n"), "];"
+), "docs/results.js")
+
+# Order parameters by total index on the first output.
+ord <- res[res$index == "Total" & res$output == outputs[[1]]$title, ]
+res$label  <- factor(res$label, levels = ord$label[order(ord$value)])
+res$output <- factor(res$output, levels = sapply(outputs, `[[`, "title"))
+
+p2 <- ggplot(res, aes(x = value, y = label, colour = index)) +
+  geom_vline(xintercept = 0, colour = "#c9c8c3", linewidth = 0.4) +
+  geom_errorbarh(aes(xmin = lo, xmax = hi), height = 0,
+                 linewidth = 0.5, position = position_dodge(width = 0.6)) +
+  geom_point(size = 2.4, position = position_dodge(width = 0.6)) +
+  facet_wrap(~ output, ncol = 2) +
+  scale_colour_manual(values = c("First-order" = BLUE, "Total" = ORANGE)) +
+  labs(title = "Which uncertain inputs drive the outputs?",
+       subtitle = sprintf("Sobol' indices (Jansen estimators), %s model runs, 95%% bootstrap intervals",
+                          format(nrow(design$X), big.mark = ",")),
+       x = "Share of output variance", y = NULL, colour = NULL) +
+  theme_clean +
+  theme(legend.position = "top", legend.justification = "left",
+        strip.text = element_text(face = "bold", hjust = 0, colour = "#0b0b0b"))
+ggsave("outputs/sobol_indices.png", p2, width = 10, height = 5, dpi = 200)
+
+# Console summary
+for (nm in levels(res$output)) {
+  cat("\n==", nm, "==\n")
+  s <- res[res$output == nm, ]
+  w <- reshape(s[, c("label", "index", "value")], idvar = "label",
+               timevar = "index", direction = "wide")
+  names(w) <- c("input", "first_order", "total")
+  w <- w[order(-w$total), ]
+  w$first_order <- round(w$first_order, 3); w$total <- round(w$total, 3)
+  print(w, row.names = FALSE)
+  cat("Sum of first-order indices:", round(sum(w$first_order), 3), "\n")
+}
